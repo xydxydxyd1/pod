@@ -434,7 +434,11 @@ func (p *Pod) handleCommand(cmd command.Command) {
 		if c.TableNum == 2 {
 			p.state.Delivered += c.Pulses
 			p.state.Reservoir -= c.Pulses
-			p.state.BolusEnd = time.Now().Add(time.Duration(c.Pulses) * time.Second * 2)
+			if p.state.PodProgress > response.PodProgressInsertingCannula {
+				p.state.BolusEnd = time.Now().Add(time.Duration(c.Pulses) * time.Second * 2)
+			} else {
+				p.state.BolusEnd = time.Now().Add(time.Duration(c.Pulses) * time.Second) // one sec/pulse during pod setup
+			}
 		}
 
 		if crashAfterProcessingCommand {
@@ -444,6 +448,9 @@ func (p *Pod) handleCommand(cmd command.Command) {
 		}
 
 	case *command.GetStatus:
+		if p.state.PodProgress == response.PodProgressPriming {
+			p.state.PodProgress = response.PodProgressPrimingCompleted
+		}
 		if p.state.PodProgress == response.PodProgressInsertingCannula {
 			p.state.PodProgress = response.PodProgressRunningAbove50U
 		}
