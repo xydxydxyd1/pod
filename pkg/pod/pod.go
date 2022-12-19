@@ -395,15 +395,15 @@ func (p *Pod) getResponse(cmd command.Command) response.Response {
 }
 
 func (p *Pod) handleCommand(cmd command.Command) {
+	if crashBeforeProcessingCommand && cmd.DoesMutatePodState() {
+		log.Fatalf("pkg pod; Crashing before processing command with sequence %d", cmd.GetSeq())
+	}
 	switch c := cmd.(type) {
 	case *command.GetVersion:
 		p.state.PodProgress = response.PodProgressReminderInitialized
 	case *command.SetUniqueID:
 		p.state.PodProgress = response.PodProgressPairingCompleted
 	case *command.ProgramInsulin:
-		if crashBeforeProcessingCommand {
-			log.Fatalf("pkg pod; Crashing before processing command with sequence %d", c.GetSeq())
-		}
 		log.Debugf("pkg pod; ProgramInsulin: PodProgress = %d", p.state.PodProgress)
 
 		if p.state.PodProgress < response.PodProgressPriming {
@@ -441,12 +441,6 @@ func (p *Pod) handleCommand(cmd command.Command) {
 			}
 		}
 
-		if crashAfterProcessingCommand {
-			p.state.LastProgSeqNum = cmd.GetSeq() // Normally this happens below, but we do it here in this special case
-			p.state.Save()
-			log.Fatalf("pkg pod; Crashing after processing command with sequence %d", c.GetSeq())
-		}
-
 	case *command.GetStatus:
 		if p.state.PodProgress == response.PodProgressPriming {
 			p.state.PodProgress = response.PodProgressPrimingCompleted
@@ -470,8 +464,13 @@ func (p *Pod) handleCommand(cmd command.Command) {
 		// No action
 	}
 	if cmd.DoesMutatePodState() {
-		log.Debugf("pkg pod; Updating LastProgSeqNum = %d", cmd.GetSeq())
-		p.state.LastProgSeqNum = cmd.GetSeq()
+		seq := cmd.GetSeq()
+		log.Debugf("pkg pod; Updating LastProgSeqNum = %d", seq)
+		p.state.LastProgSeqNum = seq
+		if crashAfterProcessingCommand {
+			p.state.Save()
+			log.Fatalf("pkg pod; Crashing after processing command with sequence %d", seq)
+		}
 	}
 }
 
