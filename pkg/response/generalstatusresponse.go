@@ -66,9 +66,9 @@ func (r *GeneralStatusResponse) Marshal() ([]byte, error) {
 	// Delivery bits returned in upper nibble
 	if r.ExtendedBolusActive {
 		// extended bolus bit exclusive of bolus active bit
-		response[1] |= 0b100 << 4
+		response[1] |= 0b1000 << 4
 	} else if r.BolusActive {
-		response[1] |= 0b010 << 4
+		response[1] |= 0b0100 << 4
 	}
 	if r.TempBasalActive {
 		// temp basal active bit exclusive of basal active bit
