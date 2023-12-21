@@ -26,9 +26,11 @@ func (g *GetStatus) GetSeq() uint8 {
 }
 
 func (g *GetStatus) IsResponseHardcoded() bool {
-	if g.RequestType == 0 || g.RequestType == 7 || g.RequestType == 2 {
+	if g.RequestType == 0 || g.RequestType == 1 || g.RequestType == 2 || g.RequestType == 3 || g.RequestType == 5 {
+		// These status types all return dynamic information based on changing pod values
 		return false
 	} else {
+		// 0x46, 0x50 & 0x51 and the Nack response for other request types are all hardcoded values
 		return true
 	}
 }
@@ -40,9 +42,7 @@ func (g *GetStatus) DoesMutatePodState() bool {
 // TODO remove this once all other message types return something other than
 // Hardcoded for GetResponseType()
 func (g *GetStatus) GetResponse() (response.Response, error) {
-	if g.RequestType == 0x2 {
-		return &response.DetailedStatusResponse{}, nil
-	} else if g.RequestType == 0x46 {
+	if g.RequestType == 0x46 {
 		return &response.Type46StatusResponse{}, nil
 	} else if g.RequestType == 0x50 {
 		return &response.Type50StatusResponse{}, nil
