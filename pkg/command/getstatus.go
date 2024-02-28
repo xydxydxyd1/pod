@@ -26,7 +26,8 @@ func (g *GetStatus) GetSeq() uint8 {
 }
 
 func (g *GetStatus) IsResponseHardcoded() bool {
-	if g.RequestType == 0 || g.RequestType == 1 || g.RequestType == 2 || g.RequestType == 3 || g.RequestType == 5 {
+	if g.RequestType == 0 || g.RequestType == 1 || g.RequestType == 2 ||
+		g.RequestType == 3 || g.RequestType == 5 || g.RequestType == 7 {
 		// These status types all return dynamic information based on changing pod values
 		return false
 	} else {
