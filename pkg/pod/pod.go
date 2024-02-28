@@ -466,11 +466,20 @@ func (p *Pod) handleCommand(cmd command.Command) {
 		p.state.PodProgress = response.PodProgressPairingCompleted
 
 	case *command.GetStatus: // 0x0E
+		now := time.Now()
 		if p.state.PodProgress == response.PodProgressPriming {
-			p.state.PodProgress = response.PodProgressPrimingCompleted
+			// if enough time has passed for priming to finish, advance PodProgress
+			if p.state.BolusEnd.Before(now) {
+				log.Infof("*** Advancing progress to PodProgressPrimingCompleted as prime bolus has ended")
+				p.state.PodProgress = response.PodProgressPrimingCompleted
+			}
 		}
-		if p.state.PodProgress == response.PodProgressInsertingCannula {
-			p.state.PodProgress = response.PodProgressRunningAbove50U
+		if p.state.PodProgress == response.PodProgressInsertingCannula && !p.state.BolusEnd.After(now) {
+			// if enough time has passed for cannula insert bolus to finish, advance PodProgress
+			if p.state.BolusEnd.Before(now) {
+				log.Infof("*** Advancing progress to PodProgressRunningAbove50U as cannula insert bolus has ended")
+				p.state.PodProgress = response.PodProgressRunningAbove50U
+			}
 		}
 
 	case *command.SilenceAlerts: // 0x11
