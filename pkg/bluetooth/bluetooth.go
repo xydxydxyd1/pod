@@ -333,7 +333,7 @@ func (b *Ble) expectCommand(expected Packet) {
 
 func (b *Ble) writeMessage(msg *message.Message) {
 	var buf bytes.Buffer
-	var index byte = 0
+	var index = 0
 
 	b.WriteCmd(CmdRTS)
 	b.expectCommand(CmdCTS) // TODO figure out what to do if !CTS
@@ -344,7 +344,7 @@ func (b *Ble) writeMessage(msg *message.Message) {
 	log.Tracef("pkg bluetooth; Sending message: %x", bytes)
 	sum := crc32.ChecksumIEEE(bytes)
 	if len(bytes) <= 18 {
-		buf.WriteByte(index) // index
+		buf.WriteByte(byte(index))
 		buf.WriteByte(0)     // fragments
 
 		buf.WriteByte(byte(sum >> 24))
@@ -360,7 +360,7 @@ func (b *Ble) writeMessage(msg *message.Message) {
 		b.writeDataBuffer(&buf)
 
 		if len(bytes) > 14 {
-			buf.WriteByte(index)
+			buf.WriteByte(byte(index))
 			buf.WriteByte(byte(len(bytes) - 14))
 			buf.Write(bytes[14:])
 			b.writeDataBuffer(&buf)
@@ -369,16 +369,16 @@ func (b *Ble) writeMessage(msg *message.Message) {
 	}
 
 	size := len(bytes)
-	fullFragments := (byte)((size - 18) / 19)
-	rest := (byte)((size - (int(fullFragments) * 19)) - 18)
-	buf.WriteByte(index)
-	buf.WriteByte(fullFragments + 1)
+	fullFragments := (size - 18) / 19
+	rest := (size - (fullFragments * 19)) - 18
+	buf.WriteByte(byte(index))
+	buf.WriteByte(byte(fullFragments + 1))
 	buf.Write(bytes[:18])
 
 	b.writeDataBuffer(&buf)
 
 	for index = 1; index <= fullFragments; index++ {
-		buf.WriteByte(index)
+		buf.WriteByte(byte(index))
 		if index == 1 {
 			buf.Write(bytes[18:37])
 		} else {
@@ -387,8 +387,8 @@ func (b *Ble) writeMessage(msg *message.Message) {
 		b.writeDataBuffer(&buf)
 	}
 
-	buf.WriteByte(index)
-	buf.WriteByte(rest)
+	buf.WriteByte(byte(index))
+	buf.WriteByte(byte(rest))
 	buf.WriteByte(byte(sum >> 24))
 	buf.WriteByte(byte(sum >> 16))
 	buf.WriteByte(byte(sum >> 8))
@@ -401,8 +401,8 @@ func (b *Ble) writeMessage(msg *message.Message) {
 	b.writeDataBuffer(&buf)
 	if rest > 14 {
 		index++
-		buf.WriteByte(index)
-		buf.WriteByte(rest - 14)
+		buf.WriteByte(byte(index))
+		buf.WriteByte(byte(rest - 14))
 		buf.Write(bytes[fullFragments*19+18+14:])
 		for buf.Len() < 20 {
 			buf.WriteByte(0)

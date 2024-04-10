@@ -106,7 +106,7 @@ func (p *Pod) StartActivation() {
 	pair := &pair.Pair{}
 	msg, _ := p.ble.ReadMessage()
 	if err := pair.ParseSP1SP2(msg); err != nil {
-		log.Fatalf("pkg pod;  pkg pod; error parsing SP1SP2 %s", err)
+		log.Fatalf("pkg pod; error parsing SP1SP2 %s", err)
 	}
 	// read PDM public key and nonce
 	msg, _ = p.ble.ReadMessage()
@@ -342,7 +342,7 @@ func (p *Pod) makeGeneralStatusResponse() response.Response {
 
 	var now = time.Now()
 
-	return &response.GeneralStatusResponse{
+	return &response.GeneralStatusResponse {
 		LastProgSeqNum:      p.state.LastProgSeqNum,
 		Reservoir:           p.state.Reservoir,
 		Alerts:              p.state.ActiveAlertSlots,
@@ -361,7 +361,7 @@ func (p *Pod) makeDetailedStatusResponse() response.Response {
 
 	var now = time.Now()
 
-	return &response.DetailedStatusResponse{
+	return &response.DetailedStatusResponse {
 		LastProgSeqNum:      p.state.LastProgSeqNum,
 		Reservoir:           p.state.Reservoir,
 		Alerts:              p.state.ActiveAlertSlots,
@@ -378,29 +378,120 @@ func (p *Pod) makeDetailedStatusResponse() response.Response {
 	}
 }
 
+func (p *Pod) makeType1StatusResponse() response.Response {
+
+	return &response.Type1StatusResponse {
+		TriggeredAlerts:     p.state.TriggerTimes,
+	}
+}
+
+func (p *Pod) makeType3StatusResponse() response.Response {
+
+	return &response.Type3StatusResponse {
+		FaultEvent:          p.state.FaultEvent,
+		FaultEventTime:      p.state.FaultTime,
+		MinutesActive:       p.state.MinutesActive(),
+	}
+}
+
+func (p *Pod) makeType5StatusResponse() response.Response {
+
+	var activationTime = p.state.ActivationTime
+
+	return &response.Type5StatusResponse {
+		FaultEvent:          p.state.FaultEvent,
+		FaultEventTime:      p.state.FaultTime,
+		Year:                uint8(activationTime.Year() - 2000),
+		Month:               uint8(activationTime.Month()),
+		Day:                 uint8(activationTime.Day()),
+		Hour:                uint8(activationTime.Hour()),
+		Minute:              uint8(activationTime.Minute()),
+	}
+}
+
 func (p *Pod) getResponse(cmd command.Command) response.Response {
 	var rsp response.Response
 
-	// If explicit request for detail, or we have a fault, return detail status.
-	getStatus, ok := cmd.(*command.GetStatus)
-	if (ok && getStatus.RequestType == 2) || p.state.FaultEvent != 0 {
-		rsp = p.makeDetailedStatusResponse()
+	getStatus, isStatusRequest := cmd.(*command.GetStatus)
+	if !isStatusRequest || getStatus.RequestType == 0 {
+		// Not a get status command or a type 0 get status
+		if p.state.FaultEvent == 0 {
+			// Pod is not faulted, return a general status response
+			rsp = p.makeGeneralStatusResponse()
+		} else {
+			// Pod is faulted, return a detailed status response
+			rsp = p.makeDetailedStatusResponse()
+		}
 	} else {
-		rsp = p.makeGeneralStatusResponse()
+		// Return the requested status type independent of the pod fault state
+		switch getStatus.RequestType {
+		case 1:
+			rsp = p.makeType1StatusResponse()
+		case 2:
+			rsp = p.makeDetailedStatusResponse()
+		case 3:
+			rsp = p.makeType3StatusResponse()
+		case 5:
+			rsp = p.makeType5StatusResponse()
+		default:
+			// Includes 0x46, 0x50, 0x51 and the nack responses that are all hardcoded
+			log.Fatal("pkg pod; getStatus: unexpected type 0x%x", getStatus.RequestType)
+		}
 	}
+
 	return rsp
+}
+
+// clear the alert bit mask and the trigger times array for alerts in the mask
+func (p *Pod) clearAlerts(alertMask uint8) {
+	p.state.ActiveAlertSlots = p.state.ActiveAlertSlots &^ alertMask
+
+	for i := 0; i < 8; i++ {
+		if ((1 << i) & alertMask) != 0 {
+			p.state.TriggerTimes[i] = 0
+		}
+	}
 }
 
 func (p *Pod) handleCommand(cmd command.Command) {
 	if crashBeforeProcessingCommand && cmd.DoesMutatePodState() {
 		log.Fatalf("pkg pod; Crashing before processing command with sequence %d", cmd.GetSeq())
 	}
+
 	switch c := cmd.(type) {
-	case *command.GetVersion:
+	case *command.GetVersion: // 0x03
 		p.state.PodProgress = response.PodProgressReminderInitialized
-	case *command.SetUniqueID:
+
+	case *command.SetUniqueID: // 0x07
 		p.state.PodProgress = response.PodProgressPairingCompleted
-	case *command.ProgramInsulin:
+
+	case *command.GetStatus: // 0x0E
+		now := time.Now()
+		if p.state.PodProgress == response.PodProgressPriming {
+			// if enough time has passed for priming to finish, advance PodProgress
+			if p.state.BolusEnd.Before(now) {
+				log.Infof("*** Advancing progress to PodProgressPrimingCompleted as prime bolus has ended")
+				p.state.PodProgress = response.PodProgressPrimingCompleted
+			}
+		}
+		if p.state.PodProgress == response.PodProgressInsertingCannula && !p.state.BolusEnd.After(now) {
+			// if enough time has passed for cannula insert bolus to finish, advance PodProgress
+			if p.state.BolusEnd.Before(now) {
+				log.Infof("*** Advancing progress to PodProgressRunningAbove50U as cannula insert bolus has ended")
+				p.state.PodProgress = response.PodProgressRunningAbove50U
+			}
+		}
+
+	case *command.SilenceAlerts: // 0x11
+		// clears the ActiveAlertSlots bits and Trigger Times for the specified alerts
+		p.clearAlerts(c.AlertMask)
+
+	case *command.ProgramAlerts: // 0x19
+		// For now just clears the ActiveAlertSlots bits and Trigger Times for alerts being programmed
+		// Later could add code to manage timers for configured alerts to make the sim more pod-like.
+		p.clearAlerts(c.AlertMask)
+
+	case *command.ProgramInsulin: // 0x1A
 		log.Debugf("pkg pod; ProgramInsulin: PodProgress = %d", p.state.PodProgress)
 
 		if p.state.PodProgress < response.PodProgressPriming {
@@ -438,14 +529,7 @@ func (p *Pod) handleCommand(cmd command.Command) {
 			}
 		}
 
-	case *command.GetStatus:
-		if p.state.PodProgress == response.PodProgressPriming {
-			p.state.PodProgress = response.PodProgressPrimingCompleted
-		}
-		if p.state.PodProgress == response.PodProgressInsertingCannula {
-			p.state.PodProgress = response.PodProgressRunningAbove50U
-		}
-	case *command.StopDelivery:
+	case *command.StopDelivery: // 0x1F
 		if c.StopBolus {
 			p.state.ExtendedBolusActive = false
 		}
@@ -455,11 +539,11 @@ func (p *Pod) handleCommand(cmd command.Command) {
 		if c.StopBasal {
 			p.state.BasalActive = false
 		}
-	case *command.SilenceAlerts:
-		p.state.ActiveAlertSlots = p.state.ActiveAlertSlots &^ c.AlertMask
-	default:
+
+	default: // includes 0x08, 0x1C, 0x1E
 		// No action
 	}
+
 	if cmd.DoesMutatePodState() {
 		seq := cmd.GetSeq()
 		log.Debugf("pkg pod; Updating LastProgSeqNum = %d", seq)
@@ -481,6 +565,15 @@ func (p *Pod) SetReservoir(newVal float32) {
 func (p *Pod) SetAlerts(newVal uint8) {
 	p.mtx.Lock()
 	p.state.ActiveAlertSlots = newVal
+
+	// Save the current pod time in alert trigger
+	// time array for any alerts slots going active
+	var podTime = p.state.MinutesActive()
+	for i := 0; i < 8; i++ {
+		if ((1 << i) & newVal) != 0 {
+			p.state.TriggerTimes[i] = podTime
+		}
+	}
 	p.state.Save()
 	p.mtx.Unlock()
 }
